@@ -1,195 +1,145 @@
-#include "ping.h"
+/*********************************************************************
+ *  JHockey 2025
+ *  ---------------------------------------------------------------
+ *  Sensors:
+ *    - Pixy2     : detect orange puck
+ *    - Ping      : verify puck is in front of robot
+ *    - BNO055    : IMU for heading / PID
+ *    - ZigBee    : receives "M,TTTT,XXX,YYY" – we only use X,Y,match byte
+ *
+ *  STATE FLOW:
+ *    FIND_PUCK  ->  ALIGN_TO_PUCK  ->  GO_TO_PUCK
+ *                                       |  (lost)
+ *                                       v
+ *                                    FIND_PUCK
+ *    GO_TO_PUCK -> PUSH_TO_GOAL -> FINISHED
+ *********************************************************************/
+
 #include "motors.h"
+#include "ping.h"
 #include "pixy.h"
+#include "ir.h"
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 
-// Define pins
-#define PING_PIN 2
+// -------------------- Hardware objects ----------------------------
+#define PING_PIN     2
+#define XBEE_SERIAL  Serial2
+#define LEFT_IR_PIN  A0
+#define RIGHT_IR_PIN A1
 
-// Define distance threshold
-#define DIST 26.5
+Motor           motor;
+PingSensor      pingSense(PING_PIN);
+PixySensor      pixy;
+Adafruit_BNO055 bno(55, 0x28);
+IRSensor        leftIR(LEFT_IR_PIN);
+IRSensor        rightIR(RIGHT_IR_PIN);
 
-// Define motor
-Motor motor;
-
-// Create a PingSensor object
-PingSensor pingSense(PING_PIN);
-
-// Create a PixySensor object
-PixySensor pixy;
-
-// Check I2C device address and correct line below (by default address is 0x29 or 0x28)
-//                                   id, address
-Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
-
-// Define our possible states in the FSM
+// -------------------- FSM States ----------------------------------
 enum State {
-  MOVE_FORWARD,
-  MOVE_FORWARD_LEFT,
-  MOVE_FORWARD_RIGHT,
-  STOP_READ_PIXY,
-  TURN_LEFT,
-  TURN_RIGHT,
-  TURN_AROUND,
-  STOP
+  FIND_PUCK,
+  ALIGN_TO_PUCK,
+  GO_TO_PUCK,
+  PUSH_TO_GOAL,
+  FINISHED
 };
+State currentState = FIND_PUCK;
 
+// -------------------- Constants -----------------------------------
+const int   PIXY_CENTER_TOL  = 10;
+const int   PIXY_SIZE_CLOSE  = 1200;
+const float PING_HIT_CM      = 25.0;
+const double IR_THRESHOLD    = 200.0;
+const int   GOAL_X           = 0;
+const int   GOAL_Y           = 200;
+const int   GOAL_RADIUS_CM   = 20;
 
+// -------------------- ZigBee Data ---------------------------------
+bool  matchOn   = true; // change to false if waiting for match start
+long  matchTime = 0;
+float myX = -1, myY = -1;
 
-// The current state
-State currentState = MOVE_FORWARD;
+// -------------------- Function Prototypes -------------------------
+bool  pixySeesPuck();
+bool  pixyCentered();
+void  rotateScan();
+void  alignToPixy();
+void  driveTowardsPixy();
+bool  pingHasPuck();
+void  maintainHeadingToGoal();
+bool  lostPuck();
+bool  atGoal();
+void  parseZigBee();
 
+// -------------------- IR-based Obstacle Avoidance -----------------
+bool avoidObstacleWithIR() {
+  if (leftIR.overThreshold(IR_THRESHOLD)) {
+    motor.moveForwardRight();  // Steer away from left wall
+    return true;
+  } else if (rightIR.overThreshold(IR_THRESHOLD)) {
+    motor.moveForwardLeft();   // Steer away from right wall
+    return true;
+  }
+  return false;
+}
+
+// -------------------- Setup ---------------------------------------
 void setup() {
-  //Serial.begin(9600);
+  Serial.begin(115200);
+  XBEE_SERIAL.begin(9600);
 
-  // Initialize devices
   motor.begin();
-  leftIR.begin();
-  rightIR.begin();
   pingSense.begin();
   pixy.begin();
+  leftIR.begin();
+  rightIR.begin();
 
-  // Wait for a while for the BNO to start up
-  if (!bno.begin())
-  {
-    Serial.print("No BNO055 detected");
+  if (!bno.begin()) {
+    Serial.println("BNO055 not detected – halting.");
     while (1);
   }
 }
 
-
-
-
+// -------------------- Main FSM Loop -------------------------------
 void loop() {
-  // Read sensor values
-  float distance      = pingSense.getDistanceCm();
+  parseZigBee();
 
-  // Read angular velocity
-  sensors_event_t gyroEvent;
-  bno.getEvent(&gyroEvent, Adafruit_BNO055::VECTOR_GYROSCOPE);
-
-  Serial.print("Gyroscope (Angular Velocity) X: ");
-  Serial.print(gyroEvent.gyro.x, 4);
-
-
-  // Main FSM switch
   switch (currentState) {
 
-    // -----------------------------------
-    // MOVE_FORWARD
-    // -----------------------------------
-    case MOVE_FORWARD:
-      //Serial.print("[STATE] FWD");
-      //Serial.print("\t PING: ");
-      //Serial.print(distance);
-      //Serial.println(" cm");
-      motor.moveForward();
-
-      // Check if obstacle is close
-      if (distance < DIST) 
-      {
-        currentState = STOP_READ_PIXY;
-      }
+    // 1) Scan until puck is found
+    case FIND_PUCK:
+      rotateScan();
+      if (pixySeesPuck()) currentState = ALIGN_TO_PUCK;
       break;
 
-    // -----------------------------------
-    // MOVE_FORWARD_LEFT
-    // -----------------------------------
-    case MOVE_FORWARD_LEFT:
-      motor.moveForwardLeft();
-
-      // Possibly check if we need to switch to forward-right or normal forward
-      if (distance < DIST) {
-        currentState = STOP_READ_PIXY;
-      }
+    // 2) Align robot to face puck
+    case ALIGN_TO_PUCK:
+      if (avoidObstacleWithIR()) break;
+      alignToPixy();
+      if (!pixySeesPuck())         currentState = FIND_PUCK;
+      else if (pixyCentered())     currentState = GO_TO_PUCK;
       break;
 
-    // -----------------------------------
-    // MOVE_FORWARD_RIGHT
-    // -----------------------------------
-    case MOVE_FORWARD_RIGHT:
-      //Serial.print("[STATE] FWD R");
-      //Serial.print("\t PING: ");
-      //Serial.print(distance);
-      //Serial.println(" cm");
-      motor.moveForwardRight();
-
-      if (distance < DIST) {
-        currentState = STOP_READ_PIXY;
-      }
+    // 3) Drive toward the puck
+    case GO_TO_PUCK:
+      if (avoidObstacleWithIR()) break;
+      driveTowardsPixy();
+      if (lostPuck())              currentState = FIND_PUCK;
+      else if (pingHasPuck())      currentState = PUSH_TO_GOAL;
       break;
 
-    // -----------------------------------
-    // STOP_READ_PIXY
-    // -----------------------------------
-    case STOP_READ_PIXY: {
-      //Serial.println("[STATE] READ PIXY");
+    // 4) Push puck toward goal
+    case PUSH_TO_GOAL:
+      if (avoidObstacleWithIR()) break;
+      maintainHeadingToGoal();
+      if (lostPuck())              currentState = FIND_PUCK;
+      else if (atGoal())           currentState = FINISHED;
+      break;
+
+    // 5) Celebration / stop
+    case FINISHED:
       motor.stop();
-      delay(500);
-
-      // Read the signature from Pixy
-      int signature = pixy.getSignature();
-      Serial.print("[INFO] Pixy signature: ");
-      Serial.println(signature);
-
-      // For example:
-      // 1 = green, 2 = red, 3 = blue
-      if (signature == 1) {
-        currentState = TURN_LEFT;
-      }
-      else if (signature == 2) {
-        currentState = TURN_RIGHT;
-      }
-      else if (signature == 3) {
-        currentState = TURN_AROUND;
-      }
-      else {
-        // If unknown signature, just stop
-        currentState = STOP;
-      }
-      break;
-    }
-
-    // -----------------------------------
-    // TURN_LEFT
-    // -----------------------------------
-    case TURN_LEFT:
-      //Serial.println("[STATE] L");
-      motor.turnLeft();
-      delay(500);
-      currentState = MOVE_FORWARD;
-      break;
-
-    // -----------------------------------
-    // TURN_RIGHT
-    // -----------------------------------
-    case TURN_RIGHT:
-      //Serial.println("[STATE] R");
-      motor.turnRight();
-      delay(500);
-      currentState = MOVE_FORWARD;
-      break;
-
-    // -----------------------------------
-    // TURN_AROUND
-    // -----------------------------------
-    case TURN_AROUND:
-      //Serial.println("[STATE] 180");
-      motor.turnAround();
-      delay(500);
-      currentState = MOVE_FORWARD;
-      break;
-
-    // -----------------------------------
-    // STOP
-    // -----------------------------------
-    case STOP:
-      //Serial.println("[STATE] STOP");
-      motor.stop();
-      delay(5000);
       break;
   }
-  delay(10);
 }
