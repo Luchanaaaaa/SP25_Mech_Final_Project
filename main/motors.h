@@ -2,17 +2,17 @@
 #define MOTORS_H
 
 #include <Arduino.h>
-#include <DualMAX14870MotorShield.h>  // Include Pololu library
+#include <DualMAX14870MotorShield.h>  // Pololu motor driver library
 
 class Motor {
 public:
   // Constructor
   Motor();
 
-  // Initialize motors
+  // Initialize motor driver
   void begin();
 
-  // Basic motor actions
+  // Basic motor movement functions
   void moveForward();
   void turnLeft();
   void turnRight();
@@ -21,14 +21,12 @@ public:
   void moveForwardRight();
   void stop();
 
-  // Print encoder counts
-  void printEncoders();
 
 private:
-  DualMAX14870MotorShield motors; // Pololu motor driver object
-  const int SPEED = 150;          // Constant target speed for normal operation
+  DualMAX14870MotorShield motors;  // Motor driver object
+  const int SPEED = 150;           // Default base speed
 
-  // Change motor speeds from the current value to the target value.
+  // Low-level function to directly set motor speeds
   void setMotors(int targetM1, int targetM2);
 };
 
