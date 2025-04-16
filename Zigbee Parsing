@@ -1,0 +1,45 @@
+void setup() {
+  Serial.begin(115200);    // Debugging via USB
+  Serial1.begin(115200);   // Communication with XBee
+  Serial.println("Zigbee Parser Initialized");
+}
+
+void loop() {
+  static unsigned long previousMillis = 0;
+  const long interval = 500;  // milliseconds between requests
+
+  // Send a request periodically
+  if (millis() - previousMillis >= interval) {
+    previousMillis = millis();
+    Serial1.print('?');  // Request data from ZigBee
+    Serial.println("Sent data request");
+  }
+
+  // Parse incoming data
+  if (Serial1.available()) {
+    String receivedData = Serial1.readStringUntil('\n');
+    receivedData.trim();  // Remove whitespace
+
+    Serial.print("Received: ");
+    Serial.println(receivedData);
+
+    int firstComma = receivedData.indexOf(',');
+    int secondComma = receivedData.indexOf(',', firstComma + 1);
+    int thirdComma = receivedData.indexOf(',', secondComma + 1);
+
+    if (firstComma != -1 && secondComma != -1 && thirdComma != -1) {
+      String matchByte = receivedData.substring(0, firstComma);
+      int xCoord = receivedData.substring(secondComma + 1, thirdComma).toInt();
+      int yCoord = receivedData.substring(thirdComma + 1).toInt();
+
+      Serial.print("Match Byte: ");
+      Serial.println(matchByte);
+      Serial.print("X Coordinate: ");
+      Serial.println(xCoord);
+      Serial.print("Y Coordinate: ");
+      Serial.println(yCoord);
+    } else {
+      Serial.println("Invalid data format.");
+    }
+  }
+}
