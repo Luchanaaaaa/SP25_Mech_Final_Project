@@ -88,42 +88,47 @@ void searchPuck() {
 void Go_TO_THE_PUCK() {
   pixy.ccc.getBlocks();
 
+  // Check if the puck (signature 1) is visible
   if (pixy.ccc.numBlocks == 0 || pixy.ccc.blocks[0].m_signature != 1) {
     stopMovement();
-    Serial.println("Puck lost.");
+    Serial.println("❌ Puck lost.");
     return;
   }
 
-  int y = pixy.ccc.blocks[0].m_y;
-  int baseSpeed;
+  // Get X and Y positions of the puck
+  int x = pixy.ccc.blocks[0].m_x;  // Horizontal (left-right)
+  int y = pixy.ccc.blocks[0].m_y;  // Vertical (distance)
 
-  // Two-speed logic based on distance (y = 0 far, y = 200 close)
+  // Speed scaling based on distance (Y)
+  int baseSpeed;
   if (y < 100) {
     baseSpeed = 400;  // Far → go faster
   } else {
     baseSpeed = 200;  // Close → slow down
   }
 
-  // Safety clamp
- // baseSpeed = constrain(baseSpeed, 100, 200);
+  // Steering correction based on X position
+  int xCenter = 160;          // Center of Pixy frame
+  int xError = x - xCenter;   // -ve = puck left, +ve = puck right
+  int correction = xError / 2; // Adjust gain as needed
 
-  // Heading correction
-  double currentAngle = getCurrentAngle();
-  double error = angleError(targetAngle, currentAngle);
-  double correction = Kp * error;
-
-  // Apply correction to motor speeds
+  // Calculate final motor speeds
   int leftSpeed = constrain(baseSpeed - correction, 75, 400);
   int rightSpeed = constrain(baseSpeed + correction, 75, 400);
 
+  // Apply speeds to motors
   motors.setM1Speed(rightSpeed);  // Right motor
   motors.setM2Speed(leftSpeed);   // Left motor
 
   // Debug output
-  Serial.print("➡️ Approaching puck | Y: ");
+  Serial.print("🧡 Puck X: ");
+  Serial.print(x);
+  Serial.print(" | Y: ");
   Serial.print(y);
   Serial.print(" | BaseSpeed: ");
-  Serial.println(baseSpeed);
+  Serial.print(baseSpeed);
+  Serial.print(" | Correction: ");
+  Serial.println(correction);
 }
 
 // ======= IMU Helper Functions =======
