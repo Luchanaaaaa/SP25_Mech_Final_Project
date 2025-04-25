@@ -13,7 +13,7 @@ const float goalY = 223.0;
 float robotX = 0.0;
 float robotY = 0.0;
 int n = 1;
-int baseSpeed =200;
+int baseSpeed =100;
 
 // ======= Hardware Setup =======
 DualMAX14870MotorShield motors;
@@ -76,10 +76,20 @@ void loop() {
       break;
 
     case GO_TO_THE_PUCK:
-      if (pixySeesOrange()) {
+      float angle= getCurrentAngle();
+      if (pixySeesOrange() && (angle <= 90 || angle >= 270)) {
+         if (puckInPossession()) {
+           stopMovement();
+           Serial.println("✅ Puck acquired! Aligning to goal...");
+           currentState = ALIGN_ROBOT;
+          break;
+  }
+        
         Go_TO_THE_PUCK();
       }
-      else {currentState = SEARCH_PUCK;
+      else {
+        stlineForSeconds (5);        
+        currentState = SEARCH_PUCK;
       }
       break;
   
@@ -105,15 +115,14 @@ void loop() {
       Serial.print(" | Error: ");
       Serial.println(error);
 
-      if (error >= -60 && error <= 60) {
+      if (error >= -10 && error <= 10) {
         Serial.println("✅ Aligned to goal — moving to GO_TO_GOAL.");
         currentState = GO_TO_GOAL;
       } else {
         float correction = Kp * error;
-        int leftSpeed = constrain(150 - correction, 75, 400);
-        int rightSpeed = constrain(150 + correction, 75, 400);
-        motors.setM1Speed(rightSpeed);
-        motors.setM2Speed(leftSpeed);
+        int leftSpeed = constrain(100 - correction, 75, 400);
+        int rightSpeed = constrain(100 + correction, 75, 400);
+       
       }
       break;
 
@@ -230,12 +239,12 @@ void Go_TO_THE_PUCK() {
   Serial.println("Ping");
   Serial.print(getPingDistance());
 
-  if (puckInPossession()) {
-    stopMovement();
-    Serial.println("✅ Puck acquired! Aligning to goal...");
-    currentState = ALIGN_ROBOT;
-    return;
-  }
+  // if (puckInPossession()) {
+  //   stopMovement();
+  //   Serial.println("✅ Puck acquired! Aligning to goal...");
+  //   currentState = ALIGN_ROBOT;
+  //   return;
+  // }
 }
 
 // ======= Go to Goal Movement =======
@@ -246,7 +255,7 @@ void moveTowardGoalWithPControl(float robotX, float robotY) {
   float error = angleError(goalAngleDeg, currentAngle);
   float correction = Kp * error;
 
-  int baseSpeed = 300;
+  int baseSpeed = 100;
   int leftSpeed = constrain(baseSpeed - correction, 75, 400);
   int rightSpeed = constrain(baseSpeed + correction, 75, 400);
 
@@ -259,6 +268,7 @@ void moveTowardGoalWithPControl(float robotX, float robotY) {
   Serial.print(currentAngle);
   Serial.print(" | Error: ");
   Serial.println(error);
+  
 }
 
 // ======= Puck Possession Check =======
@@ -268,7 +278,7 @@ bool puckInPossession() {
 }
 
 // ======= IMU Functions =======
-double getCurrentAngle() {
+float getCurrentAngle() {
   sensors_event_t event;
   bno.getEvent(&event);
   return event.orientation.x;
@@ -325,16 +335,39 @@ void updateRobotPositionFromZigbee() {
 
     if (firstComma != -1 && secondComma != -1 && thirdComma != -1) {
       String matchByte = receivedData.substring(0, firstComma);
-      String xCoordStr = receivedData.substring(firstComma + 1, secondComma);
-      String yCoordStr = receivedData.substring(secondComma + 1, thirdComma);
-
+      String xCoordStr = receivedData.substring(secondComma + 1, thirdComma);
+      String yCoordStr = receivedData.substring(thirdComma + 1);
       robotX = xCoordStr.toFloat();
       robotY = yCoordStr.toFloat();
 
-      Serial.print("Updated Robot Position: X=");
+      Serial.print(" robot X=");
       Serial.print(robotX);
-      Serial.print(" Y=");
+      Serial.print(" Robot Y =");
       Serial.println(robotY);
     }
    }
+}
+
+// ---- Function Definitions (outside loop) ----
+void stlineForSeconds(int durationSeconds) {
+  const double targetAngle = 360.0;
+  const double Kp = 2.0;  // Adjust this based on your tuning
+  const int baseSpeed = 200;
+
+  unsigned long startTime = millis();
+  unsigned long durationMillis = durationSeconds * 1000;
+
+  while (millis() - startTime < durationMillis) {
+    double currentAngle = getCurrentAngle();
+    double error = angleError(targetAngle, currentAngle);
+    double correction = Kp * error;
+
+    int leftSpeed = constrain(baseSpeed - correction, 75, 400);
+    int rightSpeed = constrain(baseSpeed + correction, 75, 400);
+
+    motors.setM1Speed(rightSpeed);
+    motors.setM2Speed(leftSpeed);
+  }
+
+  stopMovement();  // Stop after the duration
 }
