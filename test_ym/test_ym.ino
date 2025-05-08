@@ -9,7 +9,7 @@
 
 // ======= Pins & Constants =======
 const int pingPin = 3;
-int p=0;
+int p = 0;
 const float goalX = 57.0;
 const float goalY = 6.0;
 float robotX = 0.0;
@@ -30,10 +30,10 @@ float driveIntegral = 0.0;
 float driveLastError = 0.0;
 unsigned long driveLastTime = 0;
 
-// turing pid
-float turnKp = 3.5;  // 转向的比例系数略高
+// turning pid
+float turnKp = 3.5;  // Higher proportional coefficient for turning
 float turnKi = 0.15;
-float turnKd = 1.5;  // 转向的微分系数更高，减少振荡
+float turnKd = 1.5;  // Higher derivative coefficient for turning, reduces oscillation
 float turnIntegral = 0.0;
 float turnLastError = 0.0;
 unsigned long turnLastTime = 0;
@@ -65,21 +65,22 @@ enum RobotState {
 };
 RobotState currentState;
 
-// SubStates for drving toward a angle
+// SubStates for driving toward an angle
 enum DriveSubState {
-  TURNING_TO_TARGET,   // 旋转阶段
-  DRIVING_STRAIGHT     // 直行阶段
+  TURNING_TO_TARGET,   // Turning phase
+  DRIVING_STRAIGHT     // Driving straight phase
 };
 DriveSubState currentDriveSubState = TURNING_TO_TARGET;
 
-// 电机平衡因子 - 用于补偿左右电机差异
-float motorBalanceFactor = 1.0;  // 大于1表示左轮比右轮快，小于1表示右轮比左轮快
+// Motor balance factor - used to compensate for differences between left and right motors
+float motorBalanceFactor = 1.0;  // >1 means left wheel faster than right, <1 means right wheel faster than left
 
 // === Function Prototypes ===
 float getNormalizedYaw();
 void driveTowardYaw(float targetYaw, int baseSpeed = 150);
 bool turnWithPID(float targetAngle, int maxTurnSpeed = 150);
 void goToThePuck(int customSpeed = 150);
+
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200);
@@ -97,16 +98,15 @@ void setup() {
   Serial.println("✅ Robot ready (Pixy + FSM + Ping)");
   currentState = SEARCH_PUCK;
 
-
   // set up the imu sensor
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
   yawOffset = euler.x();
   
-  // 初始化PID时间变量
+  // Initialize PID time variables
   driveLastTime = millis();
   turnLastTime = millis();
   
-  // 重置积分项
+  // Reset integral terms
   driveIntegral = 0.0;
   turnIntegral = 0.0;
 
@@ -140,11 +140,11 @@ void loop() {
         pixy.ccc.getBlocks();
         int puckX = pixy.ccc.blocks[0].m_x;
         if (yaw > 270 || yaw < 90) {
-          Serial.println("角度对齐了");
+          Serial.println("Angle aligned");
           currentState = GO_TO_THE_PUCK;
         } else {
-          Serial.println("❌角度没对齐");
-          // 在切换到GET_BEHIND_PUCK状态前重置PID变量
+          Serial.println("❌ Angle not aligned");
+          // Reset PID variables before switching to GET_BEHIND_PUCK state
           driveIntegral = 0.0;
           driveLastError = 0.0;
           driveLastTime = millis();
@@ -159,61 +159,61 @@ void loop() {
       int distance = getSmoothedPingDistance();
       Serial.println("GET_BEHIND_PUCK⤴");
       
-      // 设置一个更大的预警距离，提前开始减速
-      const int SLOW_DOWN_THRESHOLD = 30;  // 比WALL_DISTANCE_THRESHOLD大
+      // Set a larger warning distance to start slowing down earlier
+      const int SLOW_DOWN_THRESHOLD = 30;  // Larger than WALL_DISTANCE_THRESHOLD
       
       if (distance > SLOW_DOWN_THRESHOLD || pixySeesOrange()) {
-        // 远离墙壁时正常速度
+        // Normal speed when far from wall
         driveTowardYaw(180, 150);
-        Serial.println("🚗 Drving Toward Yaw we want!");
+        Serial.println("🚗 Driving Toward Target Yaw!");
       } 
       else if (distance > WALL_DISTANCE_THRESHOLD) {
-        // 进入减速区间，速度与距离成正比
+        // In deceleration zone, speed proportional to distance
         int reducedSpeed = map(distance, WALL_DISTANCE_THRESHOLD, SLOW_DOWN_THRESHOLD, 80, 150);
         driveTowardYaw(180, reducedSpeed);
-        Serial.print("⚠️ 接近墙壁，减速: ");
+        Serial.print("⚠️ Approaching wall, reducing speed: ");
         Serial.println(reducedSpeed);
       }
       else {
-        // 先停止一小段时间，确保完全静止
+        // Stop briefly to ensure complete stop
         motors.setM1Speed(0);
         motors.setM2Speed(0);
-        delay(100);  // 短暂停止
+        delay(100);  // Brief stop
         
-        // 在切换到TURN_TO_ANGLE状态前重置PID变量
+        // Reset PID variables before switching to TURN_TO_ANGLE state
         turnIntegral = 0.0;
         turnLastError = 0.0;
         turnLastTime = millis();
         
-        // 然后切换到转向状态
+        // Switch to turning state
         currentState = TURN_TO_ANGLE;
       }
       break;
     }
     case TURN_TO_ANGLE:{
-      Serial.println("执行转向...");
-      turnTargetAngle = 0.0;  // 设置目标角度为0度
+      Serial.println("Executing turn...");
+      turnTargetAngle = 0.0;  // Set target angle to 0 degrees
       
-      // 调用turnWithPID函数进行PID控制转向
-      // 如果函数返回true，表示转向完成
+      // Call turnWithPID function for PID-controlled turning
+      // If function returns true, turning is complete
       if (turnWithPID(turnTargetAngle)) {
-        Serial.println("✅ 转向完成");
-        currentState = SEARCH_PUCK;  // 转向完成后切换到搜索状态
+        Serial.println("✅ Turn complete");
+        currentState = SEARCH_PUCK;  // Switch to search state after turning
       }
-      // 如果函数返回false，会在下一次loop()中继续执行转向
+      // If function returns false, will continue turning in next loop() cycle
       break;
     }
     case GO_TO_THE_PUCK: {
       int distance = readPingDistance();
-      Serial.print("距离球: ");
+      Serial.print("Distance to puck: ");
       Serial.println(distance);
       
-      // 检测是否已经碰到球
-      if (distance <= 3 || distance > 300) {  // 非常近，说明已经接触到球
-        Serial.println("✅ 已接触到球，准备对准球门");
+      // Check if puck has been contacted
+      if (distance <= 3 || distance > 300) {  // Very close, indicating contact with puck
+        Serial.println("✅ Puck contacted, preparing to align with goal");
         motors.setM1Speed(0);
         motors.setM2Speed(0);
-        delay(200);  // 确保完全停止
+        delay(200);  // Ensure complete stop
         currentState = ALIGN_TO_GOAL;
         break;
       }
@@ -250,7 +250,7 @@ void searchPuck() {
   }
 }
 
-void goToThePuck(int customSpeed = 150) {  
+void goToThePuck(int customSpeed) {  
   pixy.ccc.getBlocks();
 
   if (pixy.ccc.numBlocks) {
@@ -336,14 +336,14 @@ long readPingDistance() {
 
 // IMU
 void driveTowardYaw(float targetYaw, int baseSpeed) {
-  static float lastTargetYaw = -999;  // 初始化为一个不可能的角度值
+  static float lastTargetYaw = -999;  // Initialize to an impossible angle value
   
-  // 如果目标角度发生变化，重置子状态
+  // Reset substate if target angle changes
   if (targetYaw != lastTargetYaw) {
     currentDriveSubState = TURNING_TO_TARGET;
     lastTargetYaw = targetYaw;
     
-    // 重置PID变量
+    // Reset PID variables
     turnIntegral = 0.0;
     turnLastError = 0.0;
     turnLastTime = millis();
@@ -352,111 +352,111 @@ void driveTowardYaw(float targetYaw, int baseSpeed) {
     driveLastError = 0.0;
     driveLastTime = millis();
     
-    Serial.print("⚙️ 新的目标角度: ");
+    Serial.print("⚙️ New target angle: ");
     Serial.println(targetYaw);
   }
   
-  // 获取当前角度
+  // Get current angle
   float yaw = getNormalizedYaw();
   
-  // 执行当前子状态的动作
+  // Execute action for current substate
   if (currentDriveSubState == TURNING_TO_TARGET) {
-    // 执行转向
-    if (turnWithPID(targetYaw, 120)) {  // 使用较低的最大转向速度
-      // 转向完成，切换到直行状态
-      Serial.println("✅ 转向完成，开始直行");
+    // Execute turning
+    if (turnWithPID(targetYaw, 120)) {  // Use lower max turning speed
+      // Turning complete, switch to driving straight
+      Serial.println("✅ Turn complete, starting straight drive");
       currentDriveSubState = DRIVING_STRAIGHT;
       
-      // 重置直行PID变量
+      // Reset driving PID variables
       driveIntegral = 0.0;
       driveLastError = 0.0;
       driveLastTime = millis();
       
-      // 短暂停顿，确保稳定
+      // Brief pause to ensure stability
       motors.setM1Speed(0);
       motors.setM2Speed(0);
       delay(200);
     }
   } else {
-    // 执行直线行驶
-    // 计算误差
+    // Execute straight driving
+    // Calculate error
     float yawError = targetYaw - yaw;
     if (yawError > 180) yawError -= 360;
     if (yawError < -180) yawError += 360;
     
-    // 检查是否需要重新转向(如果偏离太多)
+    // Check if need to return to turning state (if deviation too large)
     if (abs(yawError) > 25.0) {
-      Serial.println("⚠️ 偏离太多，切回转向状态");
+      Serial.println("⚠️ Deviation too large, returning to turning state");
       currentDriveSubState = TURNING_TO_TARGET;
       
-      // 停止电机
+      // Stop motors
       motors.setM1Speed(0);
       motors.setM2Speed(0);
       delay(100);
       
-      // 重置转向PID变量
+      // Reset turning PID variables
       turnIntegral = 0.0;
       turnLastError = 0.0;
       turnLastTime = millis();
       return;
     }
     
-    // 计算时间差
+    // Calculate time difference
     unsigned long currentTime = millis();
-    float deltaTime = (currentTime - driveLastTime) / 1000.0; // 转换为秒
+    float deltaTime = (currentTime - driveLastTime) / 1000.0; // Convert to seconds
     
-    // 安全检查
+    // Safety check
     if (deltaTime <= 0 || deltaTime > 0.5) {
-      deltaTime = 0.01; // 如果时间异常则使用安全默认值
+      deltaTime = 0.01; // Use safe default if time is abnormal
     }
     
     driveLastTime = currentTime;
     
-    // 积分项
+    // Integral term
     driveIntegral += yawError * deltaTime;
-    driveIntegral = constrain(driveIntegral, -40, 40); // 防止积分饱和
+    driveIntegral = constrain(driveIntegral, -40, 40); // Prevent integral saturation
     
-    // 微分项
+    // Derivative term
     float derivative = (yawError - driveLastError) / deltaTime;
     driveLastError = yawError;
     
-    // PID计算 - 更积极的校正
+    // PID calculation - more aggressive correction
     float correction = driveKp * yawError + driveKi * driveIntegral + driveKd * derivative;
   
-    // 根据误差大小调整控制强度
+    // Adjust control strength based on error magnitude
     if (abs(yawError) < 5) {
-      // 误差小时，使用较轻的校正
+      // Lighter correction for small errors
       correction = (driveKp * 0.6) * yawError + (driveKi * 0.8) * driveIntegral + (driveKd * 1.2) * derivative;
     } else if (abs(yawError) > 15) {
-      // 误差大时，使用较强的校正
+      // Stronger correction for large errors
       correction = (driveKp * 1.3) * yawError + driveKi * driveIntegral + driveKd * derivative;
     }
   
-    // 应用电机平衡因子
+    // Apply motor balance factor
     float leftAdjustment = 0;
     float rightAdjustment = 0;
     
     if (motorBalanceFactor > 1.0) {
-      // 左轮比右轮快
+      // Left wheel faster than right
       leftAdjustment = baseSpeed * (motorBalanceFactor - 1.0);
     } else if (motorBalanceFactor < 1.0) {
-      // 右轮比左轮快
+      // Right wheel faster than left
       rightAdjustment = baseSpeed * (1.0 - motorBalanceFactor);
     }
   
-    // 设置电机速度
+    // Set motor speeds
     int leftSpeed = constrain(baseSpeed - correction + leftAdjustment, 70, 200);
     int rightSpeed = constrain(baseSpeed + correction + rightAdjustment, 70, 200);
   
     motors.setM1Speed(rightSpeed);
     motors.setM2Speed(leftSpeed);
   
-    // 输出调试信息
-    Serial.print("🚗 直行: 当前=");
+    // Output debug info
+    Serial.print("🚗 Driving: Current=");
     Serial.print(yaw);
-    Serial.print("° 目标=");
+    Serial.print("° Target=");
     Serial.print(targetYaw);
-    Serial.print("° 误差=");
+    Serial.print("° Error=");
     Serial.print(yawError);
     Serial.print("° P=");
     Serial.print(driveKp * yawError);
@@ -464,73 +464,15 @@ void driveTowardYaw(float targetYaw, int baseSpeed) {
     Serial.print(driveKi * driveIntegral);
     Serial.print(" D=");
     Serial.print(driveKd * derivative);
-    Serial.print(" 左速=");
+    Serial.print(" Left=");
     Serial.print(leftSpeed);
-    Serial.print(" 右速=");
+    Serial.print(" Right=");
     Serial.println(rightSpeed);
   }
 }
-// void driveTowardYaw(float targetYaw, int baseSpeed = 150) {
-//   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-//   float yaw = euler.x(); 
-//   yaw = yaw - yawOffset;
-//   if (yaw < 0) yaw += 360;
-//   if (yaw >= 360) yaw -= 360;
 
-//   float yawError = targetYaw - yaw;
-//   if (yawError > 180) yawError -= 360;
-//   if (yawError < -180) yawError += 360;
-
-//   // 计算时间差 - 使用驾驶专用时间变量
-//   unsigned long currentTime = millis();
-//   float deltaTime = (currentTime - driveLastTime) / 1000.0; // 转换为秒
-  
-//   // 添加时间安全检查
-//   if (deltaTime <= 0 || deltaTime > 0.5) {
-//     deltaTime = 0.01; // 如果时间异常则使用安全默认值
-//   }
-  
-//   driveLastTime = currentTime;
-  
-//   // 积分项 - 使用驾驶专用积分变量
-//   driveIntegral += yawError * deltaTime;
-//   driveIntegral = constrain(driveIntegral, -50, 50); // 防止积分饱和
-  
-//   // 微分项 - 使用驾驶专用误差变量
-//   float derivative = (yawError - driveLastError) / deltaTime;
-//   driveLastError = yawError;
-  
-//   // PID计算 - 使用驾驶专用PID参数
-//   float correction = driveKp * yawError + driveKi * driveIntegral + driveKd * derivative;
-
-//   // 根据速度动态调整PID参数
-//   if (abs(yawError) < 10) {
-//     // 误差小时减小P增益，增加D增益以减小振荡
-//     correction = (driveKp * 0.5) * yawError + driveKi * driveIntegral + (driveKd * 1.5) * derivative;
-//   }
-
-//   int leftSpeed = constrain(baseSpeed - correction, 100, 255);
-//   int rightSpeed = constrain(baseSpeed + correction, 100, 255);
-
-//   motors.setM1Speed(rightSpeed);
-//   motors.setM2Speed(leftSpeed);
-
-//   Serial.print("🎯 Driving toward ");
-//   Serial.print(targetYaw);
-//   Serial.print("° | Current Yaw: ");
-//   Serial.print(yaw);
-//   Serial.print(" | Error: ");
-//   Serial.print(yawError);
-//   Serial.print(" | P: ");
-//   Serial.print(driveKp * yawError);
-//   Serial.print(" | I: ");
-//   Serial.print(driveKi * driveIntegral);
-//   Serial.print(" | turnSpeedD: ");
-//   Serial.println(driveKd * derivative);
-// }
-
-bool turnWithPID(float targetAngle, int maxTurnSpeed = 150) {
-  const int minSpeed = 100;  // 调整这个值直到能在小误差时也能移动
+bool turnWithPID(float targetAngle, int maxTurnSpeed) {
+  const int minSpeed = 100;  // Adjust this value until it can move even with small errors
   const int maxSpeed = 150;
 
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
@@ -539,70 +481,70 @@ bool turnWithPID(float targetAngle, int maxTurnSpeed = 150) {
   if (yaw < 0) yaw += 360;
   if (yaw >= 360) yaw -= 360;
   
-  // 计算误差 (最短路径)
+  // Calculate error (shortest path)
   float yawError = targetAngle - yaw;
   if (yawError > 180) yawError -= 360;
   if (yawError < -180) yawError += 360;
   
-  // 恢复较小的误差阈值，提高精度
+  // Restore smaller error threshold for increased precision
   if (abs(yawError) < 2.0) {
     motors.setM1Speed(0);
     motors.setM2Speed(0);
-    return true; // 转向完成
+    return true; // Turning complete
   }
   
-  // 计算时间差 - 使用转向专用时间变量
+  // Calculate time difference - using turn-specific time variable
   unsigned long currentTime = millis();
-  float deltaTime = (currentTime - turnLastTime) / 1000.0; // 转换为秒
+  float deltaTime = (currentTime - turnLastTime) / 1000.0; // Convert to seconds
   
-  // 添加时间安全检查
+  // Add time safety check
   if (deltaTime <= 0 || deltaTime > 0.5) {
-    deltaTime = 0.01; // 如果时间异常则使用安全默认值
+    deltaTime = 0.01; // Use safe default if time is abnormal
   }
   
   turnLastTime = currentTime;
   
-  // 积分项 - 使用转向专用积分变量
+  // Integral term - using turn-specific integral variable
   turnIntegral += yawError * deltaTime;
-  turnIntegral = constrain(turnIntegral, -30, 30); // 限制积分项，防止积分饱和
+  turnIntegral = constrain(turnIntegral, -30, 30); // Limit integral term to prevent saturation
   
-  // 微分项 - 使用转向专用误差变量
+  // Derivative term - using turn-specific error variable
   float derivative = (yawError - turnLastError) / deltaTime;
   turnLastError = yawError;
   
-  // 计算PID输出 - 使用转向专用PID参数
+  // Calculate PID output - using turn-specific PID parameters
   float pidOutput = turnKp * yawError + turnKi * turnIntegral + turnKd * derivative;
   
-  // 根据误差大小动态调整PID参数
+  // Dynamically adjust PID parameters based on error magnitude
   if (abs(yawError) < 10) {
-    // 接近目标时，减小P增益，增大D增益以减小振荡
+    // Near target, reduce P gain, increase D gain to reduce oscillation
     pidOutput = (turnKp * 0.7) * yawError + turnKi * turnIntegral + (turnKd * 1.5) * derivative;
   }
   
   int turnSpeed = constrain(abs(pidOutput), minSpeed, maxSpeed);
 
   if (abs(yawError) < 5.0 && abs(pidOutput) < 5.0) {
-    // 到达目标，停止电机
+    // Target reached, stop motors
     return true;
   }
   
-  // 设置转向方向
-  if (yawError > 0) { // 需要顺时针转向
-    motors.setM1Speed(turnSpeed);    // 右电机正转
-    motors.setM2Speed(-turnSpeed);   // 左电机反转
-  } else { // 需要逆时针转向
-    motors.setM1Speed(-turnSpeed);   // 右电机反转
-    motors.setM2Speed(turnSpeed);    // 左电机正转
+  // Set turning direction
+  if (yawError > 0) { // Need clockwise turn
+    motors.setM1Speed(turnSpeed);    // Right motor forward
+    motors.setM2Speed(-turnSpeed);   // Left motor reverse
+  } else { // Need counterclockwise turn
+    motors.setM1Speed(-turnSpeed);   // Right motor reverse
+    motors.setM2Speed(turnSpeed);    // Left motor forward
   }
   
-  // 输出调试信息
-  Serial.print("🔄 转向: 当前=");
+  // Output debug information
+  Serial.print("🔄 Turning: Current=");
   Serial.print(yaw);
-  Serial.print("° 目标=");
+  Serial.print("° Target=");
   Serial.print(targetAngle);
-  Serial.print("° 误差=");
+  Serial.print("° Error=");
   Serial.print(yawError);
-  Serial.print("° 速度=");
+  Serial.print("° Speed=");
   Serial.print(turnSpeed);
   Serial.print(" P=");
   Serial.print(turnKp * yawError);
@@ -611,7 +553,7 @@ bool turnWithPID(float targetAngle, int maxTurnSpeed = 150) {
   Serial.print(" D=");
   Serial.println(turnKd * derivative);
   
-  return false; // 转向未完成
+  return false; // Turning not complete
 }
 
 void decideTurnDirection() {
@@ -698,7 +640,7 @@ double IMUAngle(){
   return event.orientation.x;
 }
 
-// 获取经过归一化处理的偏航角
+// Get normalized yaw angle
 float getNormalizedYaw() {
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
   float yaw = euler.x() - yawOffset;
