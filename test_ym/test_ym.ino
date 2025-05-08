@@ -62,7 +62,6 @@ enum RobotState {
   TURN_TO_ANGLE,
   GO_TO_THE_PUCK,
   ALIGN_TO_GOAL,
-  GO_TO_GOAL,
 };
 RobotState currentState;
 
@@ -230,10 +229,6 @@ void loop() {
 
       break;
     }
-    // case GO_TO_GOAL: {
-    //   Serial.println("tring to go to the goal");
-    //   // 待实现
-    // }
   }
   
   
