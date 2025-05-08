@@ -9,26 +9,33 @@
 
 // ======= Pins & Constants =======
 const int pingPin = 3;
-const float goalX = 57.0;
-const float goalY = 6.0;
-float robotX = 0.0;
-float robotY = 0.0;
+// const float goalX = 57.0;
+// const float goalY = 6.0;
+// float robotX = 0.0;
+// float robotY = 0.0;
 int n = 1;
-int baseSpeed = 200;
+int baseSpeed = 150;
 const int xCenter = 160; // Center of Pixy frame
 float yawOffset = 0;
 float backtrackTargetYaw = 180;   // assume 180 right now
 const int WALL_DISTANCE_THRESHOLD = 50;
 float targetHeading = 0.0;
 
-// PID Control Parameters
-float kP = 2.0;
-float kI = 0.1;
-float kD = 0.5;
-float integral = 0.0;
-float lastError = 0.0;
-unsigned long lastTime = 0;
+///////  PID Control Parameters
+float driveKp = 2.0;
+float driveKi = 0.1;
+float driveKd = 0.5;
+float driveIntegral = 0.0;
+float driveLastError = 0.0;
+unsigned long driveLastTime = 0;
 
+// turing pid
+float turnKp = 2.5;  // 转向的比例系数略高
+float turnKi = 0.1;
+float turnKd = 1.0;  // 转向的微分系数更高，减少振荡
+float turnIntegral = 0.0;
+float turnLastError = 0.0;
+unsigned long turnLastTime = 0;
 
 // ping
 #define PING_WINDOW_SIZE 5
@@ -61,7 +68,7 @@ RobotState currentState;
 // === Function Prototypes ===
 void driveTowardYaw(float targetYaw, int baseSpeed = 150);
 bool turnWithPID(float targetAngle, int maxTurnSpeed = 150);
-
+void goToThePuck(int customSpeed = 150);
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200);
@@ -83,15 +90,20 @@ void setup() {
   // set up the imu sensor
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
   yawOffset = euler.x();
-
+  
+  // 初始化PID时间变量
+  driveLastTime = millis();
+  turnLastTime = millis();
+  
+  // 重置积分项
+  driveIntegral = 0.0;
+  turnIntegral = 0.0;
 }
 
 void loop() {
   Serial.print("distance");
   Serial.println(getSmoothedPingDistance());
-  
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-
   float rawYaw = euler.x(); 
   float yaw = rawYaw - yawOffset;
   if (yaw < 0) yaw += 360;
@@ -100,7 +112,6 @@ void loop() {
   Serial.print("Yaw (Y): ");
   Serial.println(yaw);
 
-  delay(200);
   switch (currentState) {
     case SEARCH_PUCK: {
       searchPuck();
@@ -120,6 +131,10 @@ void loop() {
           currentState = GO_TO_THE_PUCK;
         } else {
           Serial.println("❌角度没对齐");
+          // 在切换到GET_BEHIND_PUCK状态前重置PID变量
+          driveIntegral = 0.0;
+          driveLastError = 0.0;
+          driveLastTime = millis();
           currentState = GET_BEHIND_PUCK;
         }
       } else {
@@ -151,6 +166,11 @@ void loop() {
         motors.setM2Speed(0);
         delay(100);  // 短暂停止
         
+        // 在切换到TURN_TO_ANGLE状态前重置PID变量
+        turnIntegral = 0.0;
+        turnLastError = 0.0;
+        turnLastTime = millis();
+        
         // 然后切换到转向状态
         currentState = TURN_TO_ANGLE;
       }
@@ -169,29 +189,39 @@ void loop() {
       // 如果函数返回false，会在下一次loop()中继续执行转向
       break;
     }
-
     case GO_TO_THE_PUCK: {
-      // if (pixySeesOrange()) {
-      //   goToThePuck();
-      // } else {
-      //   currentState = SEARCH_PUCK;
-      // }
-      goToThePuck();
+      int distance = readPingDistance();
+      Serial.print("距离球: ");
+      Serial.println(distance);
+      
+      // 检测是否已经碰到球
+      if (distance <= 3 || distance > 300) {  // 非常近，说明已经接触到球
+        Serial.println("✅ 已接触到球，准备对准球门");
+        motors.setM1Speed(0);
+        motors.setM2Speed(0);
+        delay(200);  // 确保完全停止
+        currentState = ALIGN_TO_GOAL;
+        break;
+      }
+      
+      goToThePuck(baseSpeed);
       Serial.println("GO_TO_THE_PUCK");
       break;
     }
-
+    case ALIGN_TO_GOAL:{
+      if(){
+        
+      }
+      break;
+    }
     case GO_TO_GOAL: {
       Serial.println("tring to go to the goal");
-      // int distance = getSmoothedPingDistance();
-      // while (distance < 10)
-      // driveTowardYaw(0, 180);
-      // break; 
-      // Serial.println("GO_TO_GOAL");
+      // 待实现
     }
-
- 
   }
+  
+  // 添加一个短延迟以保持稳定
+  delay(50);
 }
 
 void searchPuck() {
@@ -208,7 +238,7 @@ void searchPuck() {
   }
 }
 
-void goToThePuck() {
+void goToThePuck(int customSpeed = 150) {  
   pixy.ccc.getBlocks();
 
   if (pixy.ccc.numBlocks) {
@@ -223,8 +253,8 @@ void goToThePuck() {
     long encoderError = rightCount - leftCount;
     int encoderCorrection = encoderError / 5;
 
-    int leftSpeed = constrain(baseSpeed - visionCorrection + encoderCorrection, 75, 400);
-    int rightSpeed = constrain(baseSpeed + visionCorrection - encoderCorrection, 75, 400);
+    int leftSpeed = constrain(customSpeed - visionCorrection + encoderCorrection, 75, 400);
+    int rightSpeed = constrain(customSpeed + visionCorrection - encoderCorrection, 75, 400);
 
     motors.setM1Speed(rightSpeed); // Right motor
     motors.setM2Speed(leftSpeed);  // Left motor
@@ -241,11 +271,10 @@ void goToThePuck() {
     Serial.print(leftCount);
     Serial.print(" | Right Encoder: ");
     Serial.println(rightCount);
+    Serial.print("Speed: ");
+    Serial.println(customSpeed);
     Serial.println("Ping Distance: ");
-    
-  } else {
-    motors.setM1Speed(0);
-    motors.setM2Speed(0);
+    Serial.println(getSmoothedPingDistance());
   }
 }
 
@@ -306,26 +335,32 @@ void driveTowardYaw(float targetYaw, int baseSpeed = 150) {
   if (yawError > 180) yawError -= 360;
   if (yawError < -180) yawError += 360;
 
-  // 计算时间差
+  // 计算时间差 - 使用驾驶专用时间变量
   unsigned long currentTime = millis();
-  float deltaTime = (currentTime - lastTime) / 1000.0; // 转换为秒
-  lastTime = currentTime;
+  float deltaTime = (currentTime - driveLastTime) / 1000.0; // 转换为秒
   
-  // 积分项
-  integral += yawError * deltaTime;
-  integral = constrain(integral, -50, 50); // 防止积分饱和
+  // 添加时间安全检查
+  if (deltaTime <= 0 || deltaTime > 0.5) {
+    deltaTime = 0.01; // 如果时间异常则使用安全默认值
+  }
   
-  // 微分项
-  float derivative = (yawError - lastError) / deltaTime;
-  lastError = yawError;
+  driveLastTime = currentTime;
   
-  // PID计算
-  float correction = kP * yawError + kI * integral + kD * derivative;
+  // 积分项 - 使用驾驶专用积分变量
+  driveIntegral += yawError * deltaTime;
+  driveIntegral = constrain(driveIntegral, -50, 50); // 防止积分饱和
+  
+  // 微分项 - 使用驾驶专用误差变量
+  float derivative = (yawError - driveLastError) / deltaTime;
+  driveLastError = yawError;
+  
+  // PID计算 - 使用驾驶专用PID参数
+  float correction = driveKp * yawError + driveKi * driveIntegral + driveKd * derivative;
 
   // 根据速度动态调整PID参数
   if (abs(yawError) < 10) {
     // 误差小时减小P增益，增加D增益以减小振荡
-    correction = (kP * 0.5) * yawError + kI * integral + (kD * 1.5) * derivative;
+    correction = (driveKp * 0.5) * yawError + driveKi * driveIntegral + (driveKd * 1.5) * derivative;
   }
 
   int leftSpeed = constrain(baseSpeed - correction, 100, 255);
@@ -341,11 +376,11 @@ void driveTowardYaw(float targetYaw, int baseSpeed = 150) {
   Serial.print(" | Error: ");
   Serial.print(yawError);
   Serial.print(" | P: ");
-  Serial.print(kP * yawError);
+  Serial.print(driveKp * yawError);
   Serial.print(" | I: ");
-  Serial.print(kI * integral);
+  Serial.print(driveKi * driveIntegral);
   Serial.print(" | D: ");
-  Serial.println(kD * derivative);
+  Serial.println(driveKd * derivative);
 }
 
 bool turnWithPID(float targetAngle, int maxTurnSpeed = 150) {
@@ -361,40 +396,39 @@ bool turnWithPID(float targetAngle, int maxTurnSpeed = 150) {
   if (yawError > 180) yawError -= 360;
   if (yawError < -180) yawError += 360;
   
-  // 如果已到达目标角度(±2度误差范围内)，则停止转向
+  // 恢复较小的误差阈值，提高精度
   if (abs(yawError) < 2.0) {
     motors.setM1Speed(0);
     motors.setM2Speed(0);
     return true; // 转向完成
   }
   
-  // 计算时间差
+  // 计算时间差 - 使用转向专用时间变量
   unsigned long currentTime = millis();
-  float deltaTime = (currentTime - lastTime) / 1000.0; // 转换为秒
-  if (deltaTime > 0.5) deltaTime = 0.01; // 防止长时间暂停后的大跳变
-  lastTime = currentTime;
+  float deltaTime = (currentTime - turnLastTime) / 1000.0; // 转换为秒
   
-  // PID控制器 - 专门为原地转向优化
-  // 为转向设置不同的PID参数
-  float turnKp = 2.5;  // 比直线行驶时更高的比例增益
-  float turnKi = 0.1;  // 积分增益保持较低
-  float turnKd = 1.0;  // 增加微分增益以减少振荡
+  // 添加时间安全检查
+  if (deltaTime <= 0 || deltaTime > 0.5) {
+    deltaTime = 0.01; // 如果时间异常则使用安全默认值
+  }
   
-  // 积分项
-  integral += yawError * deltaTime;
-  integral = constrain(integral, -30, 30); // 限制积分项，防止积分饱和
+  turnLastTime = currentTime;
   
-  // 微分项
-  float derivative = (yawError - lastError) / deltaTime;
-  lastError = yawError;
+  // 积分项 - 使用转向专用积分变量
+  turnIntegral += yawError * deltaTime;
+  turnIntegral = constrain(turnIntegral, -30, 30); // 限制积分项，防止积分饱和
   
-  // 计算PID输出
-  float pidOutput = turnKp * yawError + turnKi * integral + turnKd * derivative;
+  // 微分项 - 使用转向专用误差变量
+  float derivative = (yawError - turnLastError) / deltaTime;
+  turnLastError = yawError;
+  
+  // 计算PID输出 - 使用转向专用PID参数
+  float pidOutput = turnKp * yawError + turnKi * turnIntegral + turnKd * derivative;
   
   // 根据误差大小动态调整PID参数
   if (abs(yawError) < 10) {
     // 接近目标时，减小P增益，增大D增益以减小振荡
-    pidOutput = (turnKp * 0.7) * yawError + turnKi * integral + (turnKd * 1.5) * derivative;
+    pidOutput = (turnKp * 0.7) * yawError + turnKi * turnIntegral + (turnKd * 1.5) * derivative;
   }
   
   // 将PID输出转换为电机速度
@@ -421,7 +455,7 @@ bool turnWithPID(float targetAngle, int maxTurnSpeed = 150) {
   Serial.print(" P=");
   Serial.print(turnKp * yawError);
   Serial.print(" I=");
-  Serial.print(turnKi * integral);
+  Serial.print(turnKi * turnIntegral);
   Serial.print(" D=");
   Serial.println(turnKd * derivative);
   
